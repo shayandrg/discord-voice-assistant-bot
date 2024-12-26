@@ -15,7 +15,8 @@ RUN apk add --no-cache \
 COPY package.json package-lock.json ./
 
 # Install the project dependencies
-RUN npm install --production
+# RUN npm install --production
+RUN npm install
 
 # Copy the rest of the application code
 COPY . .
