@@ -17,9 +17,7 @@ const TARGET_VOICE_CHANNEL_ID = '918866779156119552';
 let connection;
 let player;
 
-client.once('ready', async () => {
-    console.log(`Logged in as ${client.user.tag}`);
-
+async function connectToVoiceChannel() {
     try {
         const guild = client.guilds.cache.get(GUILD_ID);
         if (!guild) {
@@ -39,46 +37,72 @@ client.once('ready', async () => {
             adapterCreator: guild.voiceAdapterCreator,
         });
 
-        player = createAudioPlayer();
-        const resource = createAudioResource(mp3Path);
-
-        connection.subscribe(player);
-        player.play(resource);
-
-        player.on('error', error => {
-            console.error('Error playing audio:', error);
-            connection.destroy();
-            connection = undefined;
-        });
-
-        player.on(AudioPlayerStatus.Idle, () => {
-            console.log('Audio finished playing, replaying');
-            player.play(resource)
-        });
-
         try {
             await entersState(connection, VoiceConnectionStatus.Ready, 3000);
             console.log('Successfully connected to voice channel.');
+            return true;
         } catch (error) {
-            console.error('Failed to connect to voice channel within 30 seconds:', error);
-            connection.destroy();
+            console.error('Failed to connect to voice channel within 3 seconds:', error);
+            connection?.destroy();
             connection = undefined;
-            return;
+            return false;
         }
     } catch (error) {
-        console.error('Error joining voice channel on startup:', error);
+        console.error('Error joining voice channel:', error);
+        return false;
     }
+}
 
-    client.on('voiceStateUpdate', async (oldState, newState) => {
+async function playAudio() {
+    if (!connection) return;
 
-        if (newState.guild.id !== GUILD_ID) return;
+    if (!player) {
+        player = createAudioPlayer();
+        player.on('error', error => {
+            console.error('Error playing audio:', error);
+            connection?.destroy();
+            connection = undefined;
+        });
+        player.on(AudioPlayerStatus.Idle, () => {
+            console.log('Audio finished playing.');
+        });
+        connection.subscribe(player);
+    }
+    const resource = createAudioResource(mp3Path);
+    player.play(resource);
+}
 
-        if (newState.channelId === TARGET_VOICE_CHANNEL_ID && oldState?.channelId !== TARGET_VOICE_CHANNEL_ID) {
-            if (player.state.status === AudioPlayerStatus.Idle) {
-                player.play(createAudioResource(mp3Path));
-            }
+
+client.once('ready', async () => {
+    console.log(`Logged in as ${client.user.tag}`);
+    await connectToVoiceChannel();
+    if (connection) {
+        playAudio();
+    }
+});
+
+client.on('voiceStateUpdate', async (oldState, newState) => {
+    if (newState.guild.id !== GUILD_ID) return;
+
+    const channel = newState.guild.channels.cache.get(TARGET_VOICE_CHANNEL_ID);
+    if (!channel || !channel.isVoiceBased()) return;
+
+    if (newState.channelId === TARGET_VOICE_CHANNEL_ID) {
+        if (!connection || connection.state.status === VoiceConnectionStatus.Disconnected) {
+            const connected = await connectToVoiceChannel();
+            if (!connected) return;
         }
-    })
+        if (player && player.state.status !== AudioPlayerStatus.Playing) {
+            playAudio();
+        }
+    } else if (oldState?.channelId === TARGET_VOICE_CHANNEL_ID && !newState.channelId) {
+        if (channel.members.size === 1 && channel.members.has(client.user.id)) {
+            connection?.destroy();
+            connection = undefined;
+            player = undefined;
+            console.log("Bot is alone in the channel, disconnecting.");
+        }
+    }
 });
 
 client.login(process.env.DISCORD_TOKEN);
