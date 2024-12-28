@@ -1,12 +1,12 @@
 version: '3.8'
+
 services:
   discord-bot:
-    build: .
-    container_name: discord_bot
-    restart: always
-    env_file:
-      - .env
+    build:
+      context: .
+      dockerfile: Dockerfile
     volumes:
       - .:/usr/src/app
-    ports:
-      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    restart: always
