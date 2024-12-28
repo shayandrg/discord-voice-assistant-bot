@@ -1,108 +1,92 @@
-require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, entersState, VoiceConnectionStatus, AudioPlayerStatus } = require('@discordjs/voice');
-const path = require('path');
+require('dotenv').config()
+const path = require('path')
+const { Client, GatewayIntentBits } = require('discord.js')
+const { 
+    joinVoiceChannel, 
+    createAudioPlayer, 
+    createAudioResource, 
+    VoiceConnectionStatus 
+} = require('@discordjs/voice')
+
+const db = {
+    targetVoiceChannels: {
+        '918866779156119552': {
+
+        }
+    }
+}
+
+const currentConnections = {}
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.GuildMembers
+        GatewayIntentBits.GuildVoiceStates
     ]
-});
+})
 
-const mp3Path = path.join(__dirname, 'Recording.mp3');
-const GUILD_ID = '680708061396336666';
-const TARGET_VOICE_CHANNEL_ID = '918866779156119552';
-let connection;
-let player;
+const mp3Path = path.join(__dirname, 'voice.mp3')
 
-async function connectToVoiceChannel() {
-    try {
-        const guild = client.guilds.cache.get(GUILD_ID);
-        if (!guild) {
-            console.error('Guild not found.');
-            return;
+client.once('ready', () => {
+    console.log(`Logged in as ${client.user.tag}`)
+})
+
+client.on('voiceStateUpdate', (oldState, newState) => {
+    const channelId = newState.channel?.id
+    const targetChannel = db.targetVoiceChannels[channelId]
+
+    if (targetChannel) {
+        const guildId = newState.guild.id
+
+        if (!oldState.channel && newState.channel) {    // check if user is "joined" not moved
+            if (!currentConnections[guildId]) {
+                const connection = joinVoiceChannel({
+                    channelId: channelId,
+                    guildId: guildId,
+                    adapterCreator: newState.guild.voiceAdapterCreator
+                })
+    
+                const player = createAudioPlayer()
+                connection.subscribe(player)
+    
+                currentConnections[guildId] = { connection, player }
+    
+                console.log(`Connected to guild: ${guildId}, channel: ${channelId}`)
+    
+                const resource = createAudioResource(mp3Path)
+                player.play(resource)
+
+                connection.on(VoiceConnectionStatus.Disconnected, async () => {
+                    console.log(`Disconnected from guild: ${guildId}`)
+                    currentConnections[guildId] = null
+                    delete currentConnections[guildId]
+                    connection.destroy()
+                })
+    
+                player.on('error', (error) => {
+                    console.error(`Error in guild ${guildId}:`, error)
+                })
+            } else {
+                const { player } = currentConnections[guildId];
+                const resource = createAudioResource(mp3Path)
+                player.play(resource)
+            }
         }
-
-        const channel = guild.channels.cache.get(TARGET_VOICE_CHANNEL_ID);
-        if (!channel || !channel.isVoiceBased()) {
-            console.error('Voice channel not found.');
-            return;
-        }
-
-        connection = joinVoiceChannel({
-            channelId: TARGET_VOICE_CHANNEL_ID,
-            guildId: GUILD_ID,
-            adapterCreator: guild.voiceAdapterCreator,
-        });
-
-        try {
-            await entersState(connection, VoiceConnectionStatus.Ready, 3000);
-            console.log('Successfully connected to voice channel.');
-            return true;
-        } catch (error) {
-            console.error('Failed to connect to voice channel within 3 seconds:', error);
-            connection?.destroy();
-            connection = undefined;
-            return false;
-        }
-    } catch (error) {
-        console.error('Error joining voice channel:', error);
-        return false;
     }
+})
+
+if (!process.env.DISCORD_TOKEN) {
+    console.error('Error: DISCORD_TOKEN is not defined in the environment variables.')
+    process.exit(1)
 }
 
-async function playAudio() {
-    if (!connection) return;
-
-    if (!player) {
-        player = createAudioPlayer();
-        player.on('error', error => {
-            console.error('Error playing audio:', error);
-            connection?.destroy();
-            connection = undefined;
-        });
-        player.on(AudioPlayerStatus.Idle, () => {
-            console.log('Audio finished playing.');
-        });
-        connection.subscribe(player);
-    }
-    const resource = createAudioResource(mp3Path);
-    player.play(resource);
-}
-
-
-client.once('ready', async () => {
-    console.log(`Logged in as ${client.user.tag}`);
-    await connectToVoiceChannel();
-    if (connection) {
-        playAudio();
-    }
-});
-
-client.on('voiceStateUpdate', async (oldState, newState) => {
-    if (newState.guild.id !== GUILD_ID) return;
-
-    const channel = newState.guild.channels.cache.get(TARGET_VOICE_CHANNEL_ID);
-    if (!channel || !channel.isVoiceBased()) return;
-
-    if (newState.channelId === TARGET_VOICE_CHANNEL_ID) {
-        if (!connection || connection.state.status === VoiceConnectionStatus.Disconnected) {
-            const connected = await connectToVoiceChannel();
-            if (!connected) return;
-        }
-        if (player && player.state.status !== AudioPlayerStatus.Playing) {
-            playAudio();
-        }
-    } else if (oldState?.channelId === TARGET_VOICE_CHANNEL_ID && !newState.channelId) {
-        if (channel.members.size === 1 && channel.members.has(client.user.id)) {
-            connection?.destroy();
-            connection = undefined;
-            player = undefined;
-            console.log("Bot is alone in the channel, disconnecting.");
-        }
-    }
-});
-
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN)
+.catch(error => {
+    console.error('Failed to log in:', error)
+    process.exit(1)
+})
+process.on('SIGINT', () => {
+    console.log('Shutting down...')
+    client.destroy()
+    process.exit(0)
+})
