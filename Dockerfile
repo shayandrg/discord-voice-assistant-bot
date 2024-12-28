@@ -12,15 +12,16 @@ RUN apk add --no-cache \
     ffmpeg
 
 # Copy package.json and package-lock.json to the working directory
-COPY package.json package-lock.json ./
+# COPY package.json package-lock.json ./
+COPY . .
+COPY .env .env
 
 # Install the project dependencies
 # RUN npm install --production
 RUN npm install
 
 # Copy the rest of the application code
-COPY . .
-COPY .env .env
+
 
 # Run the bot
 CMD ["node", "bot.js"]
